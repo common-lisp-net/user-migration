@@ -5,14 +5,16 @@
 
 (in-package :ml-migration)
 
+(defparameter *db-params* `("ml-migration" ,(sb-posix:getenv "USER") nil :unix))
+
+(defun connect-db ()
+  (apply #'pomo:connect-toplevel *db-params*))
+
 (defclass subscription ()
   ((email-address :col-type string :initarg :email-address :reader email-address)
    (mailing-list :col-type string :initarg :mailing-list :reader mailing-list))
   (:metaclass postmodern:dao-class)
   (:keys email-address mailing-list))
-
-(defun connect-db ()
-  (pomo:connect-toplevel "ml-migration" "hhubner" nil :unix))
 
 (pomo:deftable subscription
   (pomo:!dao-def)
@@ -93,27 +95,28 @@
   `(xhtml-generator:html ,@body))
      
 (hunchentoot:define-easy-handler (confirm-subscriptions :uri "/migrate/confirm-subscriptions") (email-address token)
-  (format nil "hello ~A ~A~%" email-address token)
 
-  (unless (and email-address token)
-    (abort-request hunchentoot:+http-bad-request+ "Missing parameters"))
+  (pomo:with-connection *db-params*
 
-  (unless (token-valid-p email-address token)
-    (abort-request hunchentoot:+http-forbidden+ "Invalid token"))
+    (unless (and email-address token)
+      (abort-request hunchentoot:+http-bad-request+ "Missing parameters"))
 
-  (setf (hunchentoot:content-type*) "text/html")
+    (unless (token-valid-p email-address token)
+      (abort-request hunchentoot:+http-forbidden+ "Invalid token"))
 
-  (with-html ()
-    (:html
-     (:head
-      (:title "Confirm your mailing list subscriptions"))
-     (:body
-      (:p "Please select all mailing lists on common-lisp.net that you still want to be subscribed to")
-      ((:form :method "POST")
-       (:ul
-        (dolist (list-name (lists-subscribed-by email-address))
-          (html
-            (:li
-             ((:input :type "checkbox" :checked "checked"))
-             (:princ list-name)))))
-       ((:button :type "submit") "Confirm subscription to selected lists"))))))
+    (setf (hunchentoot:content-type*) "text/html")
+
+    (with-html ()
+      (:html
+        (:head
+         (:title "Confirm your mailing list subscriptions"))
+        (:body
+         (:p "Please select all mailing lists on common-lisp.net that you still want to be subscribed to")
+         ((:form :method "POST")
+          (:ul
+           (dolist (list-name (lists-subscribed-by email-address))
+             (html
+               (:li
+                ((:input :type "checkbox" :checked "checked"))
+                (:princ list-name)))))
+          ((:button :type "submit") "Confirm subscription to selected lists")))))))
