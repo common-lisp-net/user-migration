@@ -6,6 +6,7 @@
 (in-package :ml-migration)
 
 (defparameter *db-params* `("ml-migration" ,(sb-posix:getenv "USER") nil :unix))
+(defparameter *ml-list-url* "http://common-lisp.net/mailman/lists")
 
 (defun connect-db ()
   (apply #'pomo:connect-toplevel *db-params*))
@@ -72,6 +73,12 @@
                             (:= 'token token)))
               :single!))
 
+(defun (setf token-used-p) (new-value email-address token)
+  (pomo:query (:update 'token
+               :set 'usedp new-value
+               :where (:and (:= 'email-address email-address)
+                            (:= 'token token)))))
+
 (defun lists-subscribed-by (email-address)
   (pomo:query
    (:order-by
@@ -102,11 +109,13 @@
   `(xhtml-generator:html ,@body))
 
 (defmacro with-page (title &body body)
-  `(with-html ()
-     (:html
-       (:head
-        (:title ,title))
-       (:body ,@body))))
+  `(progn
+     (setf (hunchentoot:content-type*) "text/html")
+     (with-html ()
+       (:html
+         (:head
+          (:title ,title))
+         (:body ,@body)))))
      
 (hunchentoot:define-easy-handler (confirm-subscriptions :uri "/migrate/confirm-subscriptions") (email-address token)
 
@@ -118,7 +127,13 @@
     (unless (token-valid-p email-address token)
       (abort-request hunchentoot:+http-forbidden+ "Invalid token"))
 
-    (setf (hunchentoot:content-type*) "text/html")
+    (when (token-used-p email-address token)
+      (abort-request hunchentoot:+http-ok+
+                     (with-page "You already confirmed your old subscriptions"
+                       (:p "Your previous subscriptions have already been confirmed.  Please visit "
+                           ((:a :href *ml-list-url* :target "_new")
+                            " the main mailing list page")
+                           " to subscribe to more lists"))))
 
     (ecase (hunchentoot:request-method*)
       (:GET
@@ -134,6 +149,9 @@
           ((:button :type "submit") "Confirm subscription to selected lists"))))
 
       (:POST
+       ;; Actually do something
+       (setf (token-used-p email-address token) t)
+
        (with-page "Your mailing list subscriptions have been confirmed"
          (:p "Your subscription to the following list(s) has been confirmed")
          (:ul
