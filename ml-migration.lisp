@@ -7,6 +7,8 @@
 
 (defparameter *db-params* `("ml-migration" ,(sb-posix:getenv "USER") nil :unix))
 (defparameter *ml-list-url* "http://common-lisp.net/mailman/lists")
+(defparameter *sudo* "/usr/bin/sudo")
+(defparameter *mailman-add-members* "/usr/local/mailman/bin/add_members")
 
 (defun connect-db ()
   (apply #'pomo:connect-toplevel *db-params*))
@@ -88,6 +90,17 @@
     'mailing-list)
    :column))
 
+(defun subscribe-to-list (email-address list-name)
+  (with-input-from-string (s (format nil "~A~%" email-address))
+    ;; potential deadlock when the subprocess creates too much output to be buffered in the pipe
+    (let ((process (sb-ext:run-program *sudo*  `(,*mailman-add-members* "--regular-members=-" "--welcome-msg=n" "--admin-notify=n" ,list-name)
+                                       :input s :output :stream :error :output)))
+      (unless (zerop (sb-ext:process-exit-code process))
+        (error "could not subscribe ~S to mailing list ~S:~%~A~%"
+               email-address list-name
+               (with-output-to-string (s)
+                 (alexandria:copy-stream (sb-ext:process-output process) s)))))))
+
 (defvar *server* nil)
 
 (defun start (&key (port 4242))
@@ -149,12 +162,12 @@
           ((:button :type "submit") "Confirm subscription to selected lists"))))
 
       (:POST
-       ;; Actually do something
        (setf (token-used-p email-address token) t)
 
        (with-page "Your mailing list subscriptions have been confirmed"
          (:p "Your subscription to the following list(s) has been confirmed")
          (:ul
           (dolist (list-name (mapcar #'car (hunchentoot:post-parameters*)))
+            (subscribe-to-list email-address list-name)
             (html
               (:li (:princ list-name))))))))))
