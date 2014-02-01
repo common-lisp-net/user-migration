@@ -65,6 +65,13 @@
                :where (:and (:= 'email-address email-address)
                             (:= 'token token)))))
 
+(defun token-used-p (email-address token)
+  (pomo:query (:select 'usedp
+               :from 'token
+               :where (:and (:= 'email-address email-address)
+                            (:= 'token token)))
+              :single!))
+
 (defun lists-subscribed-by (email-address)
   (pomo:query
    (:order-by
@@ -93,6 +100,13 @@
 
 (defmacro html (&body body)
   `(xhtml-generator:html ,@body))
+
+(defmacro with-page (title &body body)
+  `(with-html ()
+     (:html
+       (:head
+        (:title ,title))
+       (:body ,@body))))
      
 (hunchentoot:define-easy-handler (confirm-subscriptions :uri "/migrate/confirm-subscriptions") (email-address token)
 
@@ -108,29 +122,21 @@
 
     (ecase (hunchentoot:request-method*)
       (:GET
-       (with-html ()
-         (:html
-           (:head
-            (:title "Confirm your mailing list subscriptions"))
-           (:body
-            (:p "Please select all mailing lists on common-lisp.net that you still want to be subscribed to")
-            ((:form :method "POST")
-             (:ul
-              (dolist (list-name (lists-subscribed-by email-address))
-                (html
-                  (:li
-                   ((:input :type "checkbox" :checked "checked" :name list-name))
-                   (:princ list-name)))))
-             ((:button :type "submit") "Confirm subscription to selected lists"))))))
+       (with-page "Confirm your mailing list subscriptions"
+         (:p "Please select all mailing lists on common-lisp.net that you still want to be subscribed to")
+         ((:form :method "POST")
+          (:ul
+           (dolist (list-name (lists-subscribed-by email-address))
+             (html
+               (:li
+                ((:input :type "checkbox" :checked "checked" :name list-name))
+                (:princ list-name)))))
+          ((:button :type "submit") "Confirm subscription to selected lists"))))
 
       (:POST
-       (with-html ()
-         (:html
-           (:head
-            (:title "Mailing list subscriptions confirmed"))
-           (:body
-            (:p "Your subscription to the following list(s) has been confirmed")
-            (:ul
-             (dolist (list-name (mapcar #'car (hunchentoot:post-parameters*)))
-               (html
-                 (:li (:princ list-name))))))))))))
+       (with-page "Your mailing list subscriptions have been confirmed"
+         (:p "Your subscription to the following list(s) has been confirmed")
+         (:ul
+          (dolist (list-name (mapcar #'car (hunchentoot:post-parameters*)))
+            (html
+              (:li (:princ list-name))))))))))
