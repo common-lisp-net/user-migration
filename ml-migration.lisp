@@ -21,7 +21,9 @@
 
 (defclass token ()
   ((email-address :col-type string :initarg :email-address :reader email-address)
-   (token :col-type string :initarg :token :reader token))
+   (token :col-type string :initarg :token :reader token)
+   (usedp :col-type boolean :initarg :usedp :reader usedp))
+  (:default-initargs :usedp nil)
   (:metaclass postmodern:dao-class)
   (:keys email-address))
 
@@ -34,7 +36,6 @@
     (let ((*default-pathname-defaults* (pathname base-path)))
       (dolist (subscribers-pathname (directory "**/subscribers.d/*"))
         (let ((list-name (cl-ppcre:regex-replace "/.*" (enough-namestring subscribers-pathname) "")))
-          (format t "processing ~A~%" subscribers-pathname)
           (with-open-file (f subscribers-pathname)
             (loop
               (pomo:make-dao 'subscription
@@ -48,6 +49,28 @@
       (pomo:make-dao 'token
                      :email-address email-address
                      :token (format nil "~36,8,'0R" (random most-positive-fixnum))))))
+
+(defun initialize-db (&key (base-path #P"/clo-backup/2014-01-25/var/spool/mlmmj/"))
+  (pomo:execute "drop table subscription")
+  (pomo:execute "drop table token")
+  (pomo:create-all-tables)
+  (import-paths base-path)
+  (make-tokens))
+
+(defun token-valid-p (email-address token)
+  (pomo:query (:select '*
+               :from 'token
+               :where (:and (:= 'email-address email-address)
+                            (:= 'token token)))))
+
+(defun lists-subscribed-by (email-address)
+  (pomo:query
+   (:order-by
+    (:select 'mailing-list
+     :from 'subscription
+     :where (:= 'email-address email-address))
+    'mailing-list)
+   :column))
 
 (defvar *server* nil)
 
@@ -75,10 +98,7 @@
   (unless (and email-address token)
     (abort-request hunchentoot:+http-bad-request+ "Missing parameters"))
 
-  (unless (pomo:query (:select '*
-                       :from 'token
-                       :where (:and (:= 'email-address email-address)
-                                    (:= 'token token))))
+  (unless (token-valid-p email-address token)
     (abort-request hunchentoot:+http-forbidden+ "Invalid token"))
 
   (setf (hunchentoot:content-type*) "text/html")
@@ -91,13 +111,7 @@
       (:p "Please select all mailing lists on common-lisp.net that you still want to be subscribed to")
       ((:form :method "POST")
        (:ul
-        (dolist (list-name (pomo:query
-                            (:order-by
-                             (:select 'mailing-list
-                              :from 'subscription
-                              :where (:= 'email-address email-address))
-                             'mailing-list)
-                            :column))
+        (dolist (list-name (lists-subscribed-by email-address))
           (html
             (:li
              ((:input :type "checkbox" :checked "checked"))
