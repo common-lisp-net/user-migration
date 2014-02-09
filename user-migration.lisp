@@ -35,16 +35,99 @@
 (pomo:deftable token
   (pomo:!dao-def))
 
-(defclass user ()
+(defclass shell-user ()
   ((login-name :col-type string :initarg :login-name :reader login-name)
-   (email-address :col-type string :initarg :email-address :reader email-address)
-   (ssh-authorized-keys :col-type string :initarg :ssh-keys :reader ssh-authorized-keys))
+   (full-name :col-type string :initarg :full-name :reader full-name)
+   (email-address :col-type (or s-sql:db-null string) :initarg :email-address :reader email-address)
+   (ssh-authorized-keys :col-type (or s-sql:db-null string) :initarg :ssh-authorized-keys :reader ssh-authorized-keys))
   (:metaclass postmodern:dao-class)
   (:keys login-name))
 
-(pomo:deftable user
+(pomo:deftable shell-user
   (pomo:!dao-def)
   (pomo:!index 'email-address))
+
+(defclass project ()
+  ((name :col-type string :initarg :name :reader name))
+  (:metaclass postmodern:dao-class)
+  (:keys name))
+
+(pomo:deftable project
+  (pomo:!dao-def))
+
+(defclass project-membership ()
+  ((project-name :col-type string :initarg :project-name :read project-name)
+   (member-login-name :col-type string :initarg :member-login-name :reader member-login-name))
+  (:metaclass postmodern:dao-class))
+
+(pomo:deftable project-membership
+  (pomo:!dao-def)
+  (pomo:!unique '(project-name member-login-name))
+  (pomo:!foreign 'project 'project-name 'name)
+  (pomo:!foreign 'shell-user 'member-login-name 'login-name))
+
+(defun read-line-skipping-comments (stream)
+  (loop for line = (read-line stream nil)
+        while line
+        unless (cl-ppcre:scan "^\\s*($|#.*)" line)
+          do (return line)))
+
+(defun maybe-read-file (pathname)
+  (when (probe-file pathname)
+    (alexandria:read-file-into-string pathname)))
+
+(defun read-dot-forward (pathname)
+  (alexandria:when-let (file-contents (maybe-read-file pathname))
+    (dolist (line (cl-ppcre:split #\Newline file-contents))
+      (when (cl-ppcre:scan #\@ line)
+        (return line)))))
+
+(defun import-shell-user (login-name full-name home-directory)
+  (let ((*default-pathname-defaults* (merge-pathnames (format nil "~A/" (subseq home-directory 1)))))
+    (pomo:make-dao 'shell-user
+                   :login-name login-name
+                   :full-name full-name
+                   :ssh-authorized-keys (or (maybe-read-file ".ssh/authorized_keys") :null)
+                   :email-address (or (read-dot-forward ".forward") :null))))
+
+(defun import-shell-users (backup-directory-pathname)
+  (pomo:execute "delete from shell_user")
+  (let ((*default-pathname-defaults* (cl-fad:pathname-as-directory backup-directory-pathname)))
+    (with-open-file (passwd "etc/passwd")
+      (loop
+        (destructuring-bind (login-name password uid gid full-name home-directory &optional shell)
+            (cl-ppcre:split #\: (or (read-line passwd nil)
+                                    (return)))
+          (declare (ignore password gid shell))
+          (when (>= (parse-integer uid) 1000)
+            (import-shell-user login-name full-name home-directory)))))))
+
+(defun import-project (project-name members)
+  (pomo:make-dao 'project
+                 :name project-name)
+  (dolist (member members)
+    (when (pomo:query (:select '*
+                       :from 'shell-user
+                       :where (:= 'login-name member)))
+      (pomo:make-dao 'project-membership
+                     :project-name project-name
+                     :member-login-name member))))
+
+(defun import-projects (backup-directory-pathname)
+  (pomo:execute "delete from project_membership")
+  (pomo:execute "delete from project")
+  (let ((*default-pathname-defaults* (cl-fad:pathname-as-directory backup-directory-pathname)))
+    (with-open-file (group "etc/group")
+      (loop
+        (destructuring-bind (group-name password gid &optional members)
+            (cl-ppcre:split #\: (or (read-line-skipping-comments group)
+                                    (return)))
+          (declare (ignore password))
+          (setf members (cl-ppcre:split #\, members))
+          (when (and members
+                     (not (member group-name members :test #'equal))
+                     (>= (parse-integer gid) 1000))
+            (import-project group-name members)))))))
 
 (defun import-subscriptions (base-path)
   (pomo:with-transaction ()
@@ -69,6 +152,7 @@
 (defun initialize-db (&key (base-path #P"/clo-backup/2014-01-25/var/spool/mlmmj/"))
   (pomo:execute "drop table subscription")
   (pomo:execute "drop table token")
+  (pomo:execute "drop table shell_user")
   (pomo:create-all-tables)
   (import-subscriptions base-path)
   (make-tokens))
@@ -83,8 +167,7 @@
   (pomo:query (:select 'usedp
                :from 'token
                :where (:and (:= 'email-address email-address)
-                            (:= 'token token)))
-              :single!))
+                            (:= 'token token)))))
 
 (defun (setf token-used-p) (new-value email-address token)
   (pomo:query (:update 'token
