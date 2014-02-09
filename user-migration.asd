@@ -1,5 +1,5 @@
-(defsystem ml-migration
-  :name "ml-migration"
+(defsystem user-migration
+  :name "user-migration"
   :version "0.0.1"
   :maintainer "Hans Huebner"
   :author "Hans Huebner"
@@ -12,4 +12,4 @@
                :hunchentoot
                :cl-ppcre
                :xhtmlgen)
-  :components((:file "ml-migration")))
+  :components((:file "user-migration")))

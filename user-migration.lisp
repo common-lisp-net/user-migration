@@ -1,11 +1,11 @@
 ;; -*- Lisp -*-
 
-(defpackage :ml-migration
+(defpackage :user-migration
   (:use :cl))
 
-(in-package :ml-migration)
+(in-package :user-migration)
 
-(defparameter *db-params* `("ml-migration" ,(sb-posix:getenv "USER") nil :unix))
+(defparameter *db-params* `("user-migration" ,(sb-posix:getenv "USER") nil :unix))
 (defparameter *ml-list-url* "http://common-lisp.net/mailman/lists")
 (defparameter *sudo* "/usr/bin/sudo")
 (defparameter *mailman-add-members* "/usr/local/mailman/bin/add_members")
@@ -35,7 +35,18 @@
 (pomo:deftable token
   (pomo:!dao-def))
 
-(defun import-paths (base-path)
+(defclass user ()
+  ((login-name :col-type string :initarg :login-name :reader login-name)
+   (email-address :col-type string :initarg :email-address :reader email-address)
+   (ssh-authorized-keys :col-type string :initarg :ssh-keys :reader ssh-authorized-keys))
+  (:metaclass postmodern:dao-class)
+  (:keys login-name))
+
+(pomo:deftable user
+  (pomo:!dao-def)
+  (pomo:!index 'email-address))
+
+(defun import-subscriptions (base-path)
   (pomo:with-transaction ()
     (pomo:execute "delete from subscription;")
     (let ((*default-pathname-defaults* (pathname base-path)))
@@ -59,7 +70,7 @@
   (pomo:execute "drop table subscription")
   (pomo:execute "drop table token")
   (pomo:create-all-tables)
-  (import-paths base-path)
+  (import-subscriptions base-path)
   (make-tokens))
 
 (defun token-valid-p (email-address token)
