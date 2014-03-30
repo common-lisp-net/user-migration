@@ -1,14 +1,14 @@
 ;; -*- Lisp -*-
 
 (defpackage :user-migration
-  (:use :cl))
+  (:use :cl :alexandria))
 
 (in-package :user-migration)
 
 (defparameter *db-params* `("user-migration" ,(sb-posix:getenv "USER") nil :unix))
 (defparameter *ml-list-url* "http://common-lisp.net/mailman/lists")
 (defparameter *sudo* "/usr/bin/sudo")
-(defparameter *mailman-add-members* "/usr/local/mailman/bin/add_members")
+(defparameter *mailman-add-members* "/usr/sbin/add_members")
 
 (defun connect-db ()
   (apply #'pomo:connect-toplevel *db-params*))
@@ -33,6 +33,15 @@
   (:keys email-address))
 
 (pomo:deftable token
+  (pomo:!dao-def))
+
+(defclass active-list ()
+  ((mailing-list :col-type string :initarg :mailing-list :reader mailing-list)
+   (owner :col-type string :initarg :string :reader owner))
+  (:metaclass postmodern:dao-class)
+  (:keys mailing-list))
+
+(pomo:deftable active-list
   (pomo:!dao-def))
 
 (defclass shell-user ()
@@ -92,7 +101,7 @@
 
 (defun import-shell-users (backup-directory-pathname)
   (pomo:execute "delete from shell_user")
-  (let ((*default-pathname-defaults* (cl-fad:pathname-as-directory backup-directory-pathname)))
+  (let ((*default-pathname-defaults* (merge-pathnames (cl-fad:pathname-as-directory backup-directory-pathname))))
     (with-open-file (passwd "etc/passwd")
       (loop
         (destructuring-bind (login-name password uid gid full-name home-directory &optional shell)
@@ -116,7 +125,7 @@
 (defun import-projects (backup-directory-pathname)
   (pomo:execute "delete from project_membership")
   (pomo:execute "delete from project")
-  (let ((*default-pathname-defaults* (cl-fad:pathname-as-directory backup-directory-pathname)))
+  (let ((*default-pathname-defaults* (merge-pathnames (cl-fad:pathname-as-directory backup-directory-pathname))))
     (with-open-file (group "etc/group")
       (loop
         (destructuring-bind (group-name password gid &optional members)
@@ -132,8 +141,10 @@
 (defun import-subscriptions (base-path)
   (pomo:with-transaction ()
     (pomo:execute "delete from subscription;")
-    (let ((*default-pathname-defaults* (pathname base-path)))
-      (dolist (subscribers-pathname (directory "**/subscribers.d/*"))
+    (let* ((*default-pathname-defaults* (merge-pathnames (pathname base-path)))
+           (mailing-list-path "**/subscribers.d/*"))
+      (dolist (subscribers-pathname (or (directory mailing-list-path)
+                                        (error "no mailing lists found in ~A" (merge-pathnames mailing-list-path))))
         (let ((list-name (cl-ppcre:regex-replace "/.*" (enough-namestring subscribers-pathname) "")))
           (with-open-file (f subscribers-pathname)
             (loop
@@ -149,12 +160,16 @@
                      :email-address email-address
                      :token (format nil "~36,8,'0R" (random most-positive-fixnum))))))
 
-(defun initialize-db (&key (base-path #P"/clo-backup/2014-01-25/var/spool/mlmmj/"))
-  (pomo:execute "drop table subscription")
-  (pomo:execute "drop table token")
-  (pomo:execute "drop table shell_user")
+#+(or)
+(defun initialize-db (&key ((base-path *default-pathname-defaults*) #P"/clo-backup/2014-03-30/"))
+  (pomo:execute "drop table if exists subscription")
+  (pomo:execute "drop table if exists token")
+  (pomo:execute "drop table if exists project_membership")
+  (pomo:execute "drop table if exists shell_user")
+  (pomo:execute "drop table if exists project")
+  (pomo:execute "drop table if exists active_list")
   (pomo:create-all-tables)
-  (import-subscriptions base-path)
+  (import-subscriptions "var/spool/mlmmj/")
   (make-tokens))
 
 (defun token-valid-p (email-address token)
@@ -194,6 +209,24 @@
                email-address list-name
                (with-output-to-string (s)
                  (alexandria:copy-stream (sb-ext:process-output process) s)))))))
+
+(defun read-legacy-list-owners ()
+  (alist-hash-table (mapcar (lambda (owner-file)
+                              (cons (cl-ppcre:regex-replace ".*mlmmj/(.*)/control/owner" (namestring owner-file) "\\1")
+                                    (cl-ppcre:regex-replace "(?s)\\n.*" (read-file-into-string owner-file) "")))
+                            (or (directory #P"var/spool/mlmmj/*/cotrol/owner")
+                                (error "no lists found")))
+                    :test #'equal))
+
+(defun get-active-lists ()
+  (pomo:query (:select 'mailing-list :from 'active-list) :column))
+
+(defun update-list-owners ()
+  (let ((list-owners (read-legacy-list-owners)))
+    (dolist (list (get-active-lists))
+      (pomo:query (:update 'active-list
+                   :set 'owner (gethash list list-owners)
+                   :where (:= 'mailing-list list))))))
 
 (defvar *server* nil)
 
