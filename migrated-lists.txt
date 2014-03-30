@@ -7,7 +7,7 @@ alexandria-cvs	nikodemus@random-state.net
 alexandria-devel	nikodemus@random-state.net
 anaphora-cvs	nikodemus@random-state.net
 anaphora-devel	nikodemus@random-state.net
-announcements	postmaster
+announcements	postmaster@common-lisp.net
 ansi-test-cvs	ehuelsmann@common-lisp.net
 ansi-test-devel	ehuelsmann@common-lisp.net
 antik-devel	lhealy@common-lisp.net
@@ -152,7 +152,6 @@ langutils-devel	kraison@common-lisp.net
 lift-devel	gwking@metabang.com
 linedit-cvs	nikodemus@random-state.net
 lispbox-cvs	aeriksen@common-lisp.net
-lisp-game-dev	false
 lisp-hh	edi@agharta.de
 lisplab-cvs	jivestgarden@common-lisp.net
 lisplab-devel	jivestgarden@common-lisp.net
